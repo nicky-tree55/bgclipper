@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo/logo.svg" alt="bgclipper logo" width="200">
+</p>
+
 # bgclipper
 
 [![CI](https://github.com/nicky-tree55/bgclipper/actions/workflows/ci.yml/badge.svg)](https://github.com/nicky-tree55/bgclipper/actions/workflows/ci.yml)
