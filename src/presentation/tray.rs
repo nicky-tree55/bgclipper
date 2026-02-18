@@ -43,9 +43,18 @@ where
     menu.append(&toggle_item).expect("failed to add menu item");
     menu.append(&quit_item).expect("failed to add menu item");
 
-    // Build tray icon (no custom icon — uses default)
+    // Load tray icon from embedded PNG
+    let icon_bytes = include_bytes!("../../logo/tray_icon.png");
+    let icon_image = image::load_from_memory(icon_bytes).expect("failed to load tray icon");
+    let icon_rgba = icon_image.to_rgba8();
+    let (icon_w, icon_h) = icon_rgba.dimensions();
+    let icon =
+        tray_icon::Icon::from_rgba(icon_rgba.into_raw(), icon_w, icon_h).expect("invalid icon");
+
+    // Build tray icon
     let _tray_icon = TrayIconBuilder::new()
         .with_tooltip("bgclipper")
+        .with_icon(icon)
         .with_menu(Box::new(menu))
         .build()
         .expect("failed to create tray icon");
