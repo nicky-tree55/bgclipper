@@ -138,6 +138,10 @@ mod tests {
         fn save_target_color(&self, _color: &Color) -> Result<(), Self::Error> {
             Ok(())
         }
+
+        fn ensure_config_exists(&self) -> Result<(), Self::Error> {
+            Ok(())
+        }
     }
 
     fn make_service(

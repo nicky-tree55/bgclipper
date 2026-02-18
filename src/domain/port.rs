@@ -45,4 +45,10 @@ pub trait ConfigPort {
 
     /// Saves the target color to the configuration.
     fn save_target_color(&self, color: &Color) -> Result<(), Self::Error>;
+
+    /// Ensures the config file exists.
+    ///
+    /// If the config file does not exist, creates it with default settings.
+    /// If the file already exists, does nothing.
+    fn ensure_config_exists(&self) -> Result<(), Self::Error>;
 }

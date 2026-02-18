@@ -138,6 +138,13 @@ impl ConfigPort for TomlConfigProvider {
         fs::write(&self.path, content)?;
         Ok(())
     }
+
+    fn ensure_config_exists(&self) -> Result<(), Self::Error> {
+        if !self.path.exists() {
+            self.save_target_color(&Color::default())?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -211,5 +218,29 @@ mod tests {
 
         let loaded = provider.load_target_color().unwrap();
         assert_eq!(loaded, Color::new(255, 128, 64));
+    }
+
+    #[test]
+    fn ensure_config_exists_creates_file_when_missing() {
+        let (provider, _dir) = temp_provider();
+        assert!(!provider.path.exists());
+
+        provider.ensure_config_exists().unwrap();
+
+        assert!(provider.path.exists());
+        let loaded = provider.load_target_color().unwrap();
+        assert_eq!(loaded, Color::default());
+    }
+
+    #[test]
+    fn ensure_config_exists_does_not_overwrite() {
+        let (provider, _dir) = temp_provider();
+        let custom = Color::new(10, 20, 30);
+        provider.save_target_color(&custom).unwrap();
+
+        provider.ensure_config_exists().unwrap();
+
+        let loaded = provider.load_target_color().unwrap();
+        assert_eq!(loaded, custom);
     }
 }

@@ -89,6 +89,12 @@ where
                     match service.process_clipboard() {
                         Ok(ProcessResult::Processed) => {}
                         Ok(ProcessResult::NoImage) => {}
+                        Err(e) if e.contains("config parse error") => {
+                            show_alert("bgclipper: Config Error", &e);
+                            // Disable processing until user fixes config
+                            enabled.store(false, Ordering::Relaxed);
+                            toggle_item.set_text("Enable");
+                        }
                         Err(e) => eprintln!("bgclipper: {e}"),
                     }
                 }
@@ -96,4 +102,31 @@ where
             _ => {}
         }
     });
+}
+
+/// Shows a native alert dialog.
+///
+/// Uses `osascript` on macOS and `msg` on Windows as a simple cross-platform approach.
+fn show_alert(title: &str, message: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        let script = format!(
+            r#"display dialog "{}" with title "{}" buttons {{"OK"}} default button "OK""#,
+            message.replace('"', r#"\""#),
+            title.replace('"', r#"\""#),
+        );
+        let _ = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .spawn();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("msg")
+            .args(["*", &format!("{title}\n\n{message}")])
+            .spawn();
+    }
+
+    eprintln!("{title}: {message}");
 }
