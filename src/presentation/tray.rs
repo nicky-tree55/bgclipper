@@ -94,7 +94,7 @@ where
                         Ok(ProcessResult::Processed) => {
                             info!("clipboard image processed successfully");
                         }
-                        Ok(ProcessResult::NoImage) => {}
+                        Ok(ProcessResult::NoImage | ProcessResult::Skipped) => {}
                         Err(e) if e.contains("config parse error") => {
                             warn!("config parse error: {e}");
                             show_alert("bgclipper: Config Error", &e);

@@ -1,7 +1,10 @@
+use std::cell::Cell;
+use std::hash::{DefaultHasher, Hash, Hasher};
+
 use log::debug;
 
 use crate::domain::image_processor::make_transparent;
-use crate::domain::port::{ClipboardPort, ConfigPort};
+use crate::domain::port::{ClipboardPort, ConfigPort, ImageData};
 
 /// Result of processing a clipboard image.
 #[derive(Debug, PartialEq, Eq)]
@@ -10,12 +13,18 @@ pub enum ProcessResult {
     Processed,
     /// No image was found on the clipboard.
     NoImage,
+    /// The clipboard image was already processed (skipped).
+    Skipped,
 }
 
 /// Orchestrates the clipboard-to-transparent-image workflow.
 ///
 /// Reads an image from the clipboard, applies transparency conversion
 /// for the configured target color, and writes the result back.
+///
+/// Tracks a hash of the last processed image to avoid re-processing
+/// the same image repeatedly (which would cause an infinite loop since
+/// the processed image is written back to the clipboard).
 ///
 /// Depends on port traits only — no concrete infrastructure references.
 #[derive(Debug)]
@@ -26,6 +35,8 @@ where
 {
     clipboard: C,
     config: G,
+    /// Hash of the last image written back to the clipboard.
+    last_hash: Cell<u64>,
 }
 
 impl<C, G> ClipboardService<C, G>
@@ -35,7 +46,20 @@ where
 {
     /// Creates a new service with the given clipboard and config providers.
     pub fn new(clipboard: C, config: G) -> Self {
-        Self { clipboard, config }
+        Self {
+            clipboard,
+            config,
+            last_hash: Cell::new(0),
+        }
+    }
+
+    /// Computes a hash of the image data for change detection.
+    fn hash_image(image: &ImageData) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        image.pixels.hash(&mut hasher);
+        image.width.hash(&mut hasher);
+        image.height.hash(&mut hasher);
+        hasher.finish()
     }
 
     /// Processes the current clipboard image.
@@ -59,6 +83,12 @@ where
             return Ok(ProcessResult::NoImage);
         };
 
+        // Skip if this image was already processed (avoids infinite loop)
+        let incoming_hash = Self::hash_image(&image);
+        if incoming_hash == self.last_hash.get() {
+            return Ok(ProcessResult::Skipped);
+        }
+
         debug!(
             "image detected on clipboard: {}x{} ({} bytes)",
             image.width,
@@ -79,6 +109,9 @@ where
         );
 
         make_transparent(&mut image.pixels, &target_color);
+
+        // Remember the hash of the processed image before writing it back
+        self.last_hash.set(Self::hash_image(&image));
 
         self.clipboard
             .set_image(&image)
@@ -233,5 +266,52 @@ mod tests {
         let written = service.clipboard.image.borrow();
         let written = written.as_ref().unwrap();
         assert_eq!(written.pixels, vec![0, 0, 0, 0, 255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn skips_already_processed_image() {
+        let image = ImageData {
+            pixels: vec![255, 255, 255, 255, 0, 0, 0, 255],
+            width: 2,
+            height: 1,
+        };
+        let service = make_service(Some(image), Color::new(255, 255, 255));
+
+        // First call processes
+        let result = service.process_clipboard().unwrap();
+        assert_eq!(result, ProcessResult::Processed);
+
+        // Second call skips (the processed image is still on the clipboard)
+        let result = service.process_clipboard().unwrap();
+        assert_eq!(result, ProcessResult::Skipped);
+    }
+
+    #[test]
+    fn processes_new_image_after_skip() {
+        let image1 = ImageData {
+            pixels: vec![255, 255, 255, 255],
+            width: 1,
+            height: 1,
+        };
+        let service = make_service(Some(image1), Color::new(255, 255, 255));
+
+        assert_eq!(
+            service.process_clipboard().unwrap(),
+            ProcessResult::Processed
+        );
+        assert_eq!(service.process_clipboard().unwrap(), ProcessResult::Skipped);
+
+        // Put a new different image on the clipboard
+        *service.clipboard.image.borrow_mut() = Some(ImageData {
+            pixels: vec![100, 100, 100, 255],
+            width: 1,
+            height: 1,
+        });
+
+        // Should process the new image
+        assert_eq!(
+            service.process_clipboard().unwrap(),
+            ProcessResult::Processed
+        );
     }
 }
