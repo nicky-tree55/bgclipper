@@ -2,6 +2,7 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+use log::debug;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::color::Color;
@@ -107,12 +108,17 @@ impl ConfigPort for TomlConfigProvider {
         let content = match fs::read_to_string(&self.path) {
             Ok(c) => c,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                debug!("config file not found, using defaults: {:?}", self.path);
                 return Ok(Color::default());
             }
             Err(e) => return Err(e.into()),
         };
 
         let config: ConfigFile = toml::from_str(&content)?;
+        debug!(
+            "config loaded from {:?}: RGB({}, {}, {})",
+            self.path, config.target_color.r, config.target_color.g, config.target_color.b
+        );
         Ok(Color::new(
             config.target_color.r,
             config.target_color.g,
@@ -141,7 +147,10 @@ impl ConfigPort for TomlConfigProvider {
 
     fn ensure_config_exists(&self) -> Result<(), Self::Error> {
         if !self.path.exists() {
+            debug!("creating default config at {:?}", self.path);
             self.save_target_color(&Color::default())?;
+        } else {
+            debug!("config file already exists: {:?}", self.path);
         }
         Ok(())
     }

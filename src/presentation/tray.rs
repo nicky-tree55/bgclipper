@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use log::{error, info, warn};
 use tao::event::Event;
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tray_icon::TrayIconBuilder;
@@ -77,25 +78,31 @@ where
                     let was_enabled = enabled.fetch_xor(true, Ordering::Relaxed);
                     if was_enabled {
                         toggle_item.set_text("Enable");
+                        info!("monitoring disabled");
                     } else {
                         toggle_item.set_text("Disable");
+                        info!("monitoring enabled");
                     }
                 } else if event.id() == &quit_id {
+                    info!("quit requested");
                     *control_flow = ControlFlow::Exit;
                 }
             }
             Event::NewEvents(tao::event::StartCause::ResumeTimeReached { .. }) => {
                 if enabled.load(Ordering::Relaxed) {
                     match service.process_clipboard() {
-                        Ok(ProcessResult::Processed) => {}
+                        Ok(ProcessResult::Processed) => {
+                            info!("clipboard image processed successfully");
+                        }
                         Ok(ProcessResult::NoImage) => {}
                         Err(e) if e.contains("config parse error") => {
+                            warn!("config parse error: {e}");
                             show_alert("bgclipper: Config Error", &e);
                             // Disable processing until user fixes config
                             enabled.store(false, Ordering::Relaxed);
                             toggle_item.set_text("Enable");
                         }
-                        Err(e) => eprintln!("bgclipper: {e}"),
+                        Err(e) => error!("{e}"),
                     }
                 }
             }
@@ -128,5 +135,5 @@ fn show_alert(title: &str, message: &str) {
             .spawn();
     }
 
-    eprintln!("{title}: {message}");
+    error!("{title}: {message}");
 }

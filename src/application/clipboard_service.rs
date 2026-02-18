@@ -1,3 +1,5 @@
+use log::debug;
+
 use crate::domain::image_processor::make_transparent;
 use crate::domain::port::{ClipboardPort, ConfigPort};
 
@@ -57,16 +59,32 @@ where
             return Ok(ProcessResult::NoImage);
         };
 
+        debug!(
+            "image detected on clipboard: {}x{} ({} bytes)",
+            image.width,
+            image.height,
+            image.pixels.len()
+        );
+
         let target_color = self
             .config
             .load_target_color()
             .map_err(|e| format!("failed to load config: {e}"))?;
+
+        debug!(
+            "target color loaded: RGB({}, {}, {})",
+            target_color.r(),
+            target_color.g(),
+            target_color.b()
+        );
 
         make_transparent(&mut image.pixels, &target_color);
 
         self.clipboard
             .set_image(&image)
             .map_err(|e| format!("failed to write clipboard: {e}"))?;
+
+        debug!("transparency applied, image written back to clipboard");
 
         Ok(ProcessResult::Processed)
     }
