@@ -108,7 +108,16 @@ where
             target_color.b()
         );
 
-        make_transparent(&mut image.pixels, &target_color);
+        let changed = make_transparent(&mut image.pixels, &target_color);
+
+        debug!("{changed} pixel(s) matched target color");
+
+        if changed == 0 {
+            debug!("no pixels matched — skipping clipboard write");
+            // Still remember the hash to avoid reprocessing
+            self.last_hash.set(Self::hash_image(&image));
+            return Ok(ProcessResult::Processed);
+        }
 
         // Remember the hash of the processed image before writing it back
         self.last_hash.set(Self::hash_image(&image));

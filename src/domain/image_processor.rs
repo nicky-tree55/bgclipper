@@ -6,6 +6,8 @@ use crate::domain::color::Color;
 /// pixel whose RGB channels exactly match `target`. Non-matching pixels
 /// are left unchanged.
 ///
+/// Returns the number of pixels that were made transparent.
+///
 /// # Arguments
 ///
 /// * `pixels` - Mutable RGBA pixel buffer (4 bytes per pixel: R, G, B, A).
@@ -23,22 +25,26 @@ use crate::domain::color::Color;
 ///
 /// let mut pixels = vec![255, 255, 255, 255, 0, 0, 0, 255];
 /// let white = Color::new(255, 255, 255);
-/// make_transparent(&mut pixels, &white);
+/// let count = make_transparent(&mut pixels, &white);
+/// assert_eq!(count, 1);
 /// assert_eq!(pixels, vec![255, 255, 255, 0, 0, 0, 0, 255]);
 /// ```
-pub fn make_transparent(pixels: &mut [u8], target: &Color) {
+pub fn make_transparent(pixels: &mut [u8], target: &Color) -> usize {
     assert!(
         pixels.len().is_multiple_of(4),
         "pixel buffer length must be a multiple of 4, got {}",
         pixels.len()
     );
 
+    let mut count = 0;
     for chunk in pixels.chunks_exact_mut(4) {
         let pixel_color = Color::new(chunk[0], chunk[1], chunk[2]);
         if pixel_color.matches(target) {
             chunk[3] = 0;
+            count += 1;
         }
     }
+    count
 }
 
 #[cfg(test)]
