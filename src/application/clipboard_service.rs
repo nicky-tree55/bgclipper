@@ -96,6 +96,40 @@ where
             image.pixels.len()
         );
 
+        // Sample corner pixels for diagnostics
+        if image.pixels.len() >= 4 {
+            let (r, g, b, a) = (
+                image.pixels[0],
+                image.pixels[1],
+                image.pixels[2],
+                image.pixels[3],
+            );
+            debug!("sample pixel (0,0): RGBA({r},{g},{b},{a})");
+        }
+        if image.pixels.len() >= 8 {
+            let off = 4;
+            let (r, g, b, a) = (
+                image.pixels[off],
+                image.pixels[off + 1],
+                image.pixels[off + 2],
+                image.pixels[off + 3],
+            );
+            debug!("sample pixel (1,0): RGBA({r},{g},{b},{a})");
+        }
+        // Sample center pixel
+        {
+            let center = ((image.height / 2) * image.width + (image.width / 2)) as usize * 4;
+            if center + 3 < image.pixels.len() {
+                let (r, g, b, a) = (
+                    image.pixels[center],
+                    image.pixels[center + 1],
+                    image.pixels[center + 2],
+                    image.pixels[center + 3],
+                );
+                debug!("sample pixel (center): RGBA({r},{g},{b},{a})");
+            }
+        }
+
         let target_color = self
             .config
             .load_target_color()
