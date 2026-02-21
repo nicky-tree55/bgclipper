@@ -1,10 +1,9 @@
 use std::cell::Cell;
-use std::hash::{DefaultHasher, Hash, Hasher};
 
 use log::debug;
 
 use crate::domain::image_processor::make_transparent;
-use crate::domain::port::{ClipboardPort, ConfigPort, ImageData};
+use crate::domain::port::{ClipboardPort, ConfigPort};
 
 /// Result of processing a clipboard image.
 #[derive(Debug, PartialEq, Eq)]
@@ -13,7 +12,7 @@ pub enum ProcessResult {
     Processed,
     /// No image was found on the clipboard.
     NoImage,
-    /// The clipboard image was already processed (skipped).
+    /// The clipboard has not changed since the last check (skipped).
     Skipped,
 }
 
@@ -22,9 +21,9 @@ pub enum ProcessResult {
 /// Reads an image from the clipboard, applies transparency conversion
 /// for the configured target color, and writes the result back.
 ///
-/// Tracks a hash of the last processed image to avoid re-processing
-/// the same image repeatedly (which would cause an infinite loop since
-/// the processed image is written back to the clipboard).
+/// Uses the OS clipboard change counter for lightweight change detection.
+/// After writing a processed image back, it records the new counter value
+/// so its own write is not re-processed on the next poll.
 ///
 /// Depends on port traits only — no concrete infrastructure references.
 #[derive(Debug)]
@@ -35,8 +34,8 @@ where
 {
     clipboard: C,
     config: G,
-    /// Hash of the last image written back to the clipboard.
-    last_hash: Cell<u64>,
+    /// The clipboard change counter after the last write (or initial check).
+    last_change_count: Cell<u64>,
 }
 
 impl<C, G> ClipboardService<C, G>
@@ -49,25 +48,19 @@ where
         Self {
             clipboard,
             config,
-            last_hash: Cell::new(0),
+            last_change_count: Cell::new(0),
         }
-    }
-
-    /// Computes a hash of the image data for change detection.
-    fn hash_image(image: &ImageData) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        image.pixels.hash(&mut hasher);
-        image.width.hash(&mut hasher);
-        image.height.hash(&mut hasher);
-        hasher.finish()
     }
 
     /// Processes the current clipboard image.
     ///
-    /// 1. Reads the image from the clipboard.
-    /// 2. Loads the target color from configuration.
-    /// 3. Makes matching pixels transparent.
-    /// 4. Writes the processed image back to the clipboard.
+    /// 1. Checks the clipboard change counter (lightweight).
+    /// 2. If unchanged, returns `Skipped` without reading the image.
+    /// 3. Reads the image from the clipboard.
+    /// 4. Loads the target color from configuration.
+    /// 5. Makes matching pixels transparent.
+    /// 6. Writes the processed image back to the clipboard.
+    /// 7. Records the new change counter to avoid re-processing.
     ///
     /// Returns `ProcessResult::NoImage` if no image is on the clipboard.
     ///
@@ -75,19 +68,32 @@ where
     ///
     /// Returns an error string if any clipboard or config operation fails.
     pub fn process_clipboard(&self) -> Result<ProcessResult, String> {
+        // Step 1: Lightweight change detection via counter
+        let current_count = self
+            .clipboard
+            .change_count()
+            .map_err(|e| format!("failed to read change count: {e}"))?;
+
+        if current_count == self.last_change_count.get() {
+            return Ok(ProcessResult::Skipped);
+        }
+
+        debug!(
+            "clipboard changed (count: {} -> {})",
+            self.last_change_count.get(),
+            current_count
+        );
+
+        // Step 2: Read the image
         let Some(mut image) = self
             .clipboard
             .get_image()
             .map_err(|e| format!("failed to read clipboard: {e}"))?
         else {
+            // No image — remember this counter so we don't re-check
+            self.last_change_count.set(current_count);
             return Ok(ProcessResult::NoImage);
         };
-
-        // Skip if this image was already processed (avoids infinite loop)
-        let incoming_hash = Self::hash_image(&image);
-        if incoming_hash == self.last_hash.get() {
-            return Ok(ProcessResult::Skipped);
-        }
 
         debug!(
             "image detected on clipboard: {}x{} ({} bytes)",
@@ -96,7 +102,7 @@ where
             image.pixels.len()
         );
 
-        // Sample corner pixels for diagnostics
+        // Sample corner pixel for diagnostics
         if image.pixels.len() >= 4 {
             let (r, g, b, a) = (
                 image.pixels[0],
@@ -105,29 +111,6 @@ where
                 image.pixels[3],
             );
             debug!("sample pixel (0,0): RGBA({r},{g},{b},{a})");
-        }
-        if image.pixels.len() >= 8 {
-            let off = 4;
-            let (r, g, b, a) = (
-                image.pixels[off],
-                image.pixels[off + 1],
-                image.pixels[off + 2],
-                image.pixels[off + 3],
-            );
-            debug!("sample pixel (1,0): RGBA({r},{g},{b},{a})");
-        }
-        // Sample center pixel
-        {
-            let center = ((image.height / 2) * image.width + (image.width / 2)) as usize * 4;
-            if center + 3 < image.pixels.len() {
-                let (r, g, b, a) = (
-                    image.pixels[center],
-                    image.pixels[center + 1],
-                    image.pixels[center + 2],
-                    image.pixels[center + 3],
-                );
-                debug!("sample pixel (center): RGBA({r},{g},{b},{a})");
-            }
         }
 
         let target_color = self
@@ -148,19 +131,22 @@ where
 
         if changed == 0 {
             debug!("no pixels matched — skipping clipboard write");
-            // Still remember the hash to avoid reprocessing
-            self.last_hash.set(Self::hash_image(&image));
+            self.last_change_count.set(current_count);
             return Ok(ProcessResult::Processed);
         }
-
-        // Remember the hash of the processed image before writing it back
-        self.last_hash.set(Self::hash_image(&image));
 
         self.clipboard
             .set_image(&image)
             .map_err(|e| format!("failed to write clipboard: {e}"))?;
 
-        debug!("transparency applied, image written back to clipboard");
+        // Record the counter AFTER our write so we skip our own change
+        let new_count = self
+            .clipboard
+            .change_count()
+            .map_err(|e| format!("failed to read change count after write: {e}"))?;
+        self.last_change_count.set(new_count);
+
+        debug!("transparency applied, image written back to clipboard (count: {new_count})");
 
         Ok(ProcessResult::Processed)
     }
@@ -171,13 +157,14 @@ mod tests {
     use super::*;
     use crate::domain::color::Color;
     use crate::domain::port::ImageData;
-    use std::cell::RefCell;
+    use std::cell::{Cell as StdCell, RefCell};
 
     // -- Mock ClipboardPort --
 
     #[derive(Debug)]
     struct MockClipboard {
         image: RefCell<Option<ImageData>>,
+        counter: StdCell<u64>,
     }
 
     #[derive(Debug)]
@@ -194,12 +181,18 @@ mod tests {
     impl ClipboardPort for MockClipboard {
         type Error = MockClipboardError;
 
+        fn change_count(&self) -> Result<u64, Self::Error> {
+            Ok(self.counter.get())
+        }
+
         fn get_image(&self) -> Result<Option<ImageData>, Self::Error> {
             Ok(self.image.borrow().clone())
         }
 
         fn set_image(&self, image: &ImageData) -> Result<(), Self::Error> {
             *self.image.borrow_mut() = Some(image.clone());
+            // Increment counter to simulate OS behavior
+            self.counter.set(self.counter.get() + 1);
             Ok(())
         }
     }
@@ -245,6 +238,8 @@ mod tests {
         ClipboardService::new(
             MockClipboard {
                 image: RefCell::new(image),
+                // Start at 1 so it differs from the initial last_change_count of 0
+                counter: StdCell::new(1),
             },
             MockConfig { color: target },
         )
@@ -259,7 +254,6 @@ mod tests {
 
     #[test]
     fn processes_image_and_makes_target_transparent() {
-        // 2x1 image: white pixel, black pixel
         let image = ImageData {
             pixels: vec![255, 255, 255, 255, 0, 0, 0, 255],
             width: 2,
@@ -270,7 +264,6 @@ mod tests {
         let result = service.process_clipboard().unwrap();
         assert_eq!(result, ProcessResult::Processed);
 
-        // Verify the written image
         let written = service.clipboard.image.borrow();
         let written = written.as_ref().unwrap();
         assert_eq!(written.pixels, vec![255, 255, 255, 0, 0, 0, 0, 255]);
@@ -289,6 +282,7 @@ mod tests {
 
         service.process_clipboard().unwrap();
 
+        // No pixels matched, so image is unchanged in clipboard
         let written = service.clipboard.image.borrow();
         let written = written.as_ref().unwrap();
         assert_eq!(written.pixels, vec![0, 0, 0, 255, 128, 128, 128, 255]);
@@ -296,7 +290,6 @@ mod tests {
 
     #[test]
     fn uses_configured_target_color() {
-        // Target is black, not white
         let image = ImageData {
             pixels: vec![0, 0, 0, 255, 255, 255, 255, 255],
             width: 2,
@@ -312,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn skips_already_processed_image() {
+    fn skips_when_change_count_unchanged() {
         let image = ImageData {
             pixels: vec![255, 255, 255, 255, 0, 0, 0, 255],
             width: 2,
@@ -320,17 +313,17 @@ mod tests {
         };
         let service = make_service(Some(image), Color::new(255, 255, 255));
 
-        // First call processes
+        // First call processes (counter=1 != last=0)
         let result = service.process_clipboard().unwrap();
         assert_eq!(result, ProcessResult::Processed);
 
-        // Second call skips (the processed image is still on the clipboard)
+        // Second call: counter was updated after set_image, so it matches last
         let result = service.process_clipboard().unwrap();
         assert_eq!(result, ProcessResult::Skipped);
     }
 
     #[test]
-    fn processes_new_image_after_skip() {
+    fn processes_after_external_clipboard_change() {
         let image1 = ImageData {
             pixels: vec![255, 255, 255, 255],
             width: 1,
@@ -344,12 +337,16 @@ mod tests {
         );
         assert_eq!(service.process_clipboard().unwrap(), ProcessResult::Skipped);
 
-        // Put a new different image on the clipboard
+        // Simulate external clipboard change: new image + bump counter
         *service.clipboard.image.borrow_mut() = Some(ImageData {
             pixels: vec![100, 100, 100, 255],
             width: 1,
             height: 1,
         });
+        service
+            .clipboard
+            .counter
+            .set(service.clipboard.counter.get() + 1);
 
         // Should process the new image
         assert_eq!(

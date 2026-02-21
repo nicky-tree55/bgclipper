@@ -19,6 +19,12 @@ pub trait ClipboardPort {
     /// The error type returned by clipboard operations.
     type Error: std::error::Error;
 
+    /// Returns the clipboard change counter.
+    ///
+    /// This counter increments each time the clipboard contents change.
+    /// Used for lightweight change detection without reading the full image.
+    fn change_count(&self) -> Result<u64, Self::Error>;
+
     /// Reads an image from the clipboard as RGBA pixel data.
     ///
     /// Returns `Ok(Some(ImageData))` if an image is available,
