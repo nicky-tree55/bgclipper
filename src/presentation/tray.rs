@@ -1,18 +1,14 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
-
 use log::{error, info, warn};
 use tao::event::Event;
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tray_icon::TrayIconBuilder;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 
+use global_hotkey::hotkey::HotKey;
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager};
+
 use crate::application::clipboard_service::{ClipboardService, ProcessResult};
 use crate::domain::port::{ClipboardPort, ConfigPort};
-
-/// Clipboard polling interval when enabled.
-const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// User event type for the event loop.
 enum UserEvent {
@@ -21,27 +17,23 @@ enum UserEvent {
 
 /// Runs the system tray application.
 ///
-/// Creates a tray icon with a context menu (Enable/Disable, Quit) and
-/// polls the clipboard at regular intervals when enabled.
+/// Creates a tray icon with a context menu (Quit) and listens for a
+/// global hotkey to trigger clipboard transparency processing.
 ///
 /// # Panics
 ///
-/// Panics if the event loop or tray icon cannot be created.
-pub fn run<C, G>(service: ClipboardService<C, G>)
+/// Panics if the event loop, tray icon, or hotkey manager cannot be created.
+pub fn run<C, G>(service: ClipboardService<C, G>, hotkey_str: &str)
 where
     C: ClipboardPort + 'static,
     G: ConfigPort + 'static,
 {
-    let enabled = Arc::new(AtomicBool::new(true));
-
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
 
-    // Build context menu
-    let toggle_item = MenuItem::new("Disable", true, None);
+    // Build context menu (Quit only)
     let quit_item = MenuItem::new("Quit", true, None);
 
     let menu = Menu::new();
-    menu.append(&toggle_item).expect("failed to add menu item");
     menu.append(&quit_item).expect("failed to add menu item");
 
     // Load tray icon from embedded PNG
@@ -60,49 +52,53 @@ where
         .build()
         .expect("failed to create tray icon");
 
+    // Register global hotkey
+    let hotkey_manager = GlobalHotKeyManager::new().expect("failed to create hotkey manager");
+    let hotkey: HotKey = hotkey_str
+        .parse()
+        .expect("failed to parse hotkey accelerator");
+    hotkey_manager
+        .register(hotkey)
+        .expect("failed to register global hotkey");
+    info!("global hotkey registered: {hotkey_str}");
+
+    let hotkey_id = hotkey.id();
+
     // Forward menu events to the event loop
     let proxy = event_loop.create_proxy();
     MenuEvent::set_event_handler(Some(move |event| {
         let _ = proxy.send_event(UserEvent::MenuEvent(event));
     }));
 
-    let toggle_id = toggle_item.id().clone();
     let quit_id = quit_item.id().clone();
 
     event_loop.run(move |event, _event_loop, control_flow| {
-        *control_flow = ControlFlow::WaitUntil(std::time::Instant::now() + POLL_INTERVAL);
+        *control_flow = ControlFlow::Wait;
 
         match event {
             Event::UserEvent(UserEvent::MenuEvent(event)) => {
-                if event.id() == &toggle_id {
-                    let was_enabled = enabled.fetch_xor(true, Ordering::Relaxed);
-                    if was_enabled {
-                        toggle_item.set_text("Enable");
-                        info!("monitoring disabled");
-                    } else {
-                        toggle_item.set_text("Disable");
-                        info!("monitoring enabled");
-                    }
-                } else if event.id() == &quit_id {
+                if event.id() == &quit_id {
                     info!("quit requested");
                     *control_flow = ControlFlow::Exit;
                 }
             }
-            Event::NewEvents(tao::event::StartCause::ResumeTimeReached { .. }) => {
-                if enabled.load(Ordering::Relaxed) {
-                    match service.process_clipboard() {
-                        Ok(ProcessResult::Processed) => {
-                            info!("clipboard image processed successfully");
+            Event::NewEvents(tao::event::StartCause::Poll) => {
+                if let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
+                    if event.id() == hotkey_id {
+                        info!("hotkey triggered, processing clipboard");
+                        match service.process_clipboard() {
+                            Ok(ProcessResult::Processed) => {
+                                info!("clipboard image processed successfully");
+                            }
+                            Ok(ProcessResult::NoImage) => {
+                                info!("no image on clipboard");
+                            }
+                            Err(e) if e.contains("config parse error") => {
+                                warn!("config parse error: {e}");
+                                show_alert("bgclipper: Config Error", &e);
+                            }
+                            Err(e) => error!("{e}"),
                         }
-                        Ok(ProcessResult::NoImage | ProcessResult::Skipped) => {}
-                        Err(e) if e.contains("config parse error") => {
-                            warn!("config parse error: {e}");
-                            show_alert("bgclipper: Config Error", &e);
-                            // Disable processing until user fixes config
-                            enabled.store(false, Ordering::Relaxed);
-                            toggle_item.set_text("Enable");
-                        }
-                        Err(e) => error!("{e}"),
                     }
                 }
             }

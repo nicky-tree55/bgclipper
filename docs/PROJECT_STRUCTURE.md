@@ -16,7 +16,7 @@ bgclipper/
 │   ├── logo.drawio                    # Logo source (draw.io)
 │   └── logo.svg                       # Logo image
 ├── src/
-│   ├── main.rs                        # Entry point (tray app startup)
+│   ├── main.rs                        # Entry point (tray app startup, hotkey config)
 │   ├── lib.rs                         # Library crate root (re-exports modules)
 │   ├── domain/                        # Domain layer
 │   │   ├── mod.rs
@@ -25,14 +25,14 @@ bgclipper/
 │   │   └── port.rs                    # Port traits (ClipboardPort, ConfigPort)
 │   ├── application/                   # Application layer
 │   │   ├── mod.rs
-│   │   └── clipboard_service.rs       # Use case: monitor clipboard → convert → write back
+│   │   └── clipboard_service.rs       # Use case: read clipboard → convert → write back
 │   ├── infrastructure/                # Infrastructure layer
 │   │   ├── mod.rs
 │   │   ├── clipboard.rs              # ClipboardPort implementation (OS-native clipboard access)
 │   │   └── config.rs                  # ConfigPort implementation (TOML config file read/write)
 │   └── presentation/                  # Presentation layer
 │       ├── mod.rs
-│       └── tray.rs                    # System tray UI and settings dialog
+│       └── tray.rs                    # System tray UI and global hotkey handling
 ├── tests/                         # Integration tests (cross-process, Medium tests)
 │   └── *.rs                           # Each file is a separate test binary
 ├── config.toml.example            # Example configuration file
@@ -54,7 +54,7 @@ bgclipper/
 | `src/domain/` | Core business logic with no external dependencies. Contains value objects, domain services, and port traits for dependency inversion. |
 | `src/application/` | Use cases that orchestrate domain logic. Depends on domain layer only (via port traits). |
 | `src/infrastructure/` | Implementations of port traits. Handles OS clipboard access, file I/O, and configuration parsing. |
-| `src/presentation/` | User-facing components. System tray icon, settings dialog, and event handling. |
+| `src/presentation/` | User-facing components. System tray icon, global hotkey registration, and event handling. |
 | `tests/` | Integration tests (Medium tests) that may span multiple processes or interact with OS resources. |
 
 ## Architecture

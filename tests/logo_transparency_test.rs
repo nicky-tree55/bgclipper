@@ -27,8 +27,8 @@ fn logo_background_becomes_transparent() {
         "input and expected images must have the same dimensions"
     );
 
-    // Apply transparency for background color #e7feb6
-    let bg_color = Color::new(231, 254, 182);
+    // Apply transparency for background color #00FF00
+    let bg_color = Color::new(0, 255, 0);
     make_transparent(input_rgba.as_mut(), &bg_color);
 
     // Compare pixel by pixel (for fully transparent pixels, ignore RGB values).

@@ -26,10 +26,12 @@ fn main() {
         log::error!("failed to initialize config: {e}");
     }
 
-    info!("config initialized");
+    let hotkey = config.load_hotkey();
+
+    info!("config initialized (hotkey: {hotkey})");
 
     let service = ClipboardService::new(clipboard, config);
 
     info!("starting system tray event loop");
-    tray::run(service);
+    tray::run(service, &hotkey);
 }

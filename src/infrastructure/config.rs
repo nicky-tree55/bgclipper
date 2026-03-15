@@ -12,6 +12,9 @@ use crate::domain::port::ConfigPort;
 #[derive(Debug, Serialize, Deserialize)]
 struct ConfigFile {
     target_color: ColorConfig,
+    /// Global hotkey string (e.g. "CmdOrCtrl+Shift+T").
+    /// Parsed by the `global-hotkey` crate's accelerator parser.
+    hotkey: Option<String>,
 }
 
 /// RGB color section in the TOML config file.
@@ -21,6 +24,9 @@ struct ColorConfig {
     g: u8,
     b: u8,
 }
+
+/// Default hotkey accelerator string.
+const DEFAULT_HOTKEY: &str = "CmdOrCtrl+Shift+T";
 
 /// Errors that can occur during config file operations.
 #[derive(Debug)]
@@ -99,6 +105,46 @@ impl TomlConfigProvider {
     pub fn with_path(path: PathBuf) -> Self {
         Self { path }
     }
+
+    /// Returns the raw hotkey string from the config file, or the default.
+    fn load_hotkey_raw(&self) -> String {
+        let content = match fs::read_to_string(&self.path) {
+            Ok(c) => c,
+            Err(_) => return DEFAULT_HOTKEY.to_string(),
+        };
+
+        let config: ConfigFile = match toml::from_str(&content) {
+            Ok(c) => c,
+            Err(_) => return DEFAULT_HOTKEY.to_string(),
+        };
+
+        config
+            .hotkey
+            .unwrap_or_else(|| DEFAULT_HOTKEY.to_string())
+    }
+
+    /// Loads the hotkey accelerator string from the config file.
+    ///
+    /// If the config file is missing, unreadable, or the hotkey field is absent,
+    /// returns the default hotkey (`CmdOrCtrl+Shift+T`).
+    pub fn load_hotkey(&self) -> String {
+        let raw = self.load_hotkey_raw();
+
+        // Validate by attempting to parse; fall back to default on failure
+        use global_hotkey::hotkey::HotKey;
+        match raw.parse::<HotKey>() {
+            Ok(_) => {
+                debug!("hotkey loaded: {raw}");
+                raw
+            }
+            Err(e) => {
+                log::warn!(
+                    "invalid hotkey {raw:?} in config ({e}), using default: {DEFAULT_HOTKEY}"
+                );
+                DEFAULT_HOTKEY.to_string()
+            }
+        }
+    }
 }
 
 impl ConfigPort for TomlConfigProvider {
@@ -127,12 +173,15 @@ impl ConfigPort for TomlConfigProvider {
     }
 
     fn save_target_color(&self, color: &Color) -> Result<(), Self::Error> {
+        let existing_hotkey = self.load_hotkey_raw();
+
         let config = ConfigFile {
             target_color: ColorConfig {
                 r: color.r(),
                 g: color.g(),
                 b: color.b(),
             },
+            hotkey: Some(existing_hotkey),
         };
 
         let content = toml::to_string(&config)?;
@@ -148,7 +197,19 @@ impl ConfigPort for TomlConfigProvider {
     fn ensure_config_exists(&self) -> Result<(), Self::Error> {
         if !self.path.exists() {
             debug!("creating default config at {:?}", self.path);
-            self.save_target_color(&Color::default())?;
+            let config = ConfigFile {
+                target_color: ColorConfig {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                },
+                hotkey: Some(DEFAULT_HOTKEY.to_string()),
+            };
+            let content = toml::to_string(&config)?;
+            if let Some(parent) = self.path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&self.path, content)?;
         } else {
             debug!("config file already exists: {:?}", self.path);
         }
@@ -251,5 +312,88 @@ mod tests {
 
         let loaded = provider.load_target_color().unwrap();
         assert_eq!(loaded, custom);
+    }
+
+    #[test]
+    fn load_hotkey_returns_default_when_file_missing() {
+        let (provider, _dir) = temp_provider();
+        let hotkey = provider.load_hotkey();
+        assert_eq!(hotkey, "CmdOrCtrl+Shift+T");
+    }
+
+    #[test]
+    fn load_hotkey_returns_value_from_config() {
+        let (provider, _dir) = temp_provider();
+        let content = r#"
+hotkey = "CmdOrCtrl+Shift+B"
+
+[target_color]
+r = 255
+g = 255
+b = 255
+"#;
+        fs::write(&provider.path, content).unwrap();
+        let hotkey = provider.load_hotkey();
+        assert_eq!(hotkey, "CmdOrCtrl+Shift+B");
+    }
+
+    #[test]
+    fn load_hotkey_falls_back_on_invalid_value() {
+        let (provider, _dir) = temp_provider();
+        let content = r#"
+hotkey = "not-a-valid-hotkey!!!"
+
+[target_color]
+r = 255
+g = 255
+b = 255
+"#;
+        fs::write(&provider.path, content).unwrap();
+        let hotkey = provider.load_hotkey();
+        assert_eq!(hotkey, "CmdOrCtrl+Shift+T");
+    }
+
+    #[test]
+    fn load_hotkey_falls_back_when_field_absent() {
+        let (provider, _dir) = temp_provider();
+        let content = r#"
+[target_color]
+r = 255
+g = 255
+b = 255
+"#;
+        fs::write(&provider.path, content).unwrap();
+        let hotkey = provider.load_hotkey();
+        assert_eq!(hotkey, "CmdOrCtrl+Shift+T");
+    }
+
+    #[test]
+    fn ensure_config_includes_hotkey() {
+        let (provider, _dir) = temp_provider();
+        provider.ensure_config_exists().unwrap();
+        let content = fs::read_to_string(&provider.path).unwrap();
+        assert!(content.contains("hotkey"));
+        assert!(content.contains("CmdOrCtrl+Shift+T"));
+    }
+
+    #[test]
+    fn save_target_color_preserves_hotkey() {
+        let (provider, _dir) = temp_provider();
+        let content = r#"
+hotkey = "CmdOrCtrl+Shift+X"
+
+[target_color]
+r = 255
+g = 255
+b = 255
+"#;
+        fs::write(&provider.path, content).unwrap();
+
+        provider.save_target_color(&Color::new(10, 20, 30)).unwrap();
+
+        let reloaded = fs::read_to_string(&provider.path).unwrap();
+        assert!(reloaded.contains("CmdOrCtrl+Shift+X"));
+        let loaded = provider.load_target_color().unwrap();
+        assert_eq!(loaded, Color::new(10, 20, 30));
     }
 }
