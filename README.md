@@ -10,7 +10,7 @@
 
 🌐 [日本語](README-ja.md)
 
-**Automatically make a specific background color transparent — right from your clipboard.**
+**Make a specific background color transparent with a hotkey — right from your clipboard.**
 
 ## What is bgclipper?
 
@@ -27,8 +27,9 @@ No manual editing. No extra steps. Just copy and paste.
 
 - 🎯 **Exact RGB match** — Specify one color to make transparent
 - 📋 **Clipboard-driven** — No file I/O; works entirely through clipboard
-- 🖥️ **System tray** — Runs quietly in the background with enable/disable toggle
-- ⚙️ **Simple config** — TOML file + tray settings GUI
+- ⌨️ **Hotkey triggered** — Press a shortcut key to process the clipboard image on demand
+- 🖥️ **System tray** — Runs quietly in the background
+- ⚙️ **Simple config** — TOML file for target color and hotkey
 - 🍎🪟 **Cross-platform** — macOS (Apple Silicon) and Windows
 
 ## Installation
@@ -55,10 +56,11 @@ cargo build --release
 ## Usage
 
 1. Launch `bgclipper` — it appears in your system tray.
-2. Right-click the tray icon to open **Settings** and set your target RGB color (default: white `255, 255, 255`).
-3. Copy any image to your clipboard (e.g. a screenshot).
-4. The background color is automatically made transparent.
-5. Paste the image into your favorite application.
+2. Copy any image to your clipboard (e.g. a screenshot).
+3. Press **Cmd+Shift+T** (macOS) or **Ctrl+Shift+T** (Windows) to make the background color transparent.
+4. Paste the image into your favorite application.
+
+> **Tip:** The hotkey works on any image already on the clipboard — including screenshots taken before launching bgclipper.
 
 ### Configuration
 
@@ -72,23 +74,26 @@ Settings are stored in a TOML file:
 r = 255
 g = 255
 b = 255
+hotkey = "CmdOrCtrl+Shift+T"
 ```
 
-You can also edit the color from the system tray settings GUI.
+- `target_color` — The RGB color to make transparent (default: white).
+- `hotkey` — The global shortcut key to trigger processing. If omitted or invalid, defaults to `CmdOrCtrl+Shift+T`.
 
 ## How It Works
 
 ```
 ┌──────────┐    clipboard    ┌───────────┐    transparent    ┌──────────┐
 │  Copy    │ ──── image ───▶ │ bgclipper │ ──── image ────▶ │  Paste   │
-│  (Cmd+C) │                 │  (tray)   │                  │  (Cmd+V) │
+│  (Cmd+C) │                 │ (⌨️ hotkey)│                  │  (Cmd+V) │
 └──────────┘                 └───────────┘                  └──────────┘
 ```
 
-1. Detects clipboard image change via OS-native events
-2. Scans every pixel for the target RGB color
-3. Sets matching pixels to fully transparent (alpha = 0)
-4. Writes the processed PNG back to the clipboard
+1. User presses the configured hotkey (default: Cmd+Shift+T)
+2. Reads the clipboard image
+3. Scans every pixel for the target RGB color
+4. Sets matching pixels to fully transparent (alpha = 0)
+5. Writes the processed PNG back to the clipboard
 
 ## Contributing
 
